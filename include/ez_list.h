@@ -15,9 +15,11 @@ namespace ez_stl
 		//init function, only constructor can use this function -- 初始化函数，只有构造函数才能调用此函数
 		//void myselfInit(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next);
 	public:
-		LinkListElmt();
+		//LinkListElmt();
 		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev);
 		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next);
+
+		int deleteElement();
 	};
 
 	template <class T>
