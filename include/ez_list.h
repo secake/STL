@@ -5,22 +5,23 @@
 namespace ez_stl
 {
 
-	template <T>
+	template <class T>
 	class LinkListElmt
 	{
 	private:	
 		T* data;
 		LinkListElmt* prev;
 		LinkListElmt* next;
-
-		
+		//init function, only constructor can use this function -- 初始化函数，只有构造函数才能调用此函数
+		void myselfInit(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next);
 	public:
 		LinkListElmt();
+		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev);
 		LinkListElmt(T* t_data, LinkListElmt<T>* t_next);
-		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next);
+		LinkListElmt(t* t_data, linklistelmt<t>* t_prev, linklistelmt<t>* t_next);
 	};
 
-	template <T>
+	template <class T>
 	class List
 	{
 	private:
@@ -44,6 +45,17 @@ namespace ez_stl
 
 		
 	};
+	
+	//private function
+	template <class T>
+	void LinkListElmt::myselfInit(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next)
+	{
+		data = t_data;
+		prev = t_prev;
+		next = t_next;
+	}	
+	
+
 
 	/*************************beautiful dividing line -- 优美分界线************************************/
 
@@ -51,36 +63,44 @@ namespace ez_stl
 	/* 以下为一些为了鲁棒性所写的代码，不涉及核心逻辑 */
 
 
-	/** init LinkListElmt data*/
-	/** 初始化链表元素里面的数据*/
+	/** start constructor*/
 
 	//init data to null
-	template<T>
-	LinkListElmt()
+	template<class T>
+	LinkListElmt::LinkListElmt()
 	{
-		data = NULL;
-		prev = NULL;
-		next = NULL;
+		myselfInit(NULL, NULL, NULL);
 	}
 	
-	//init data to null,and init in front other element--此函数用来初始化元素，初始化在其他函数前面
-	//T* t_data , ponit to element data--指向元素的数据的一个指针
-	//LinkListElmt* T_next, point to next element--指向下一个元素
-	template<T>
-	LinkListElmt(T* t_data, LinkListElmt<T>* t_next)
+	
+	//init data, and init in back of other element -- 此函数用来初始化元素，初始化在其他元素后面
+	//T* t_data , ponit to element data -- 指向元素的数据的一个指针
+	//LinkListElmt* t_prev, point to prev element -- 指向上一个元素
+	template<class T>
+	LinkListElmt::LinkListElmt(T* t_data, LinkListElmt<T>* t_prev)
 	{
-		data = t_data;
-		prev = NULL;
-		next = t_next;
+		myselfInit(t_data, t_prev, NULL);
+	}
+
+	//init data,and init in front of other element -- 此函数用来初始化元素，初始化在其他函数前面
+	//T* t_data , ponit to element data -- 指向元素的数据的一个指针
+	//LinkListElmt* t_next, point to next element -- 指向下一个元素
+	template<class T>
+	LinkListElmt::LinkListElmt(T* t_data, LinkListElmt<T>* t_next)
+	{
+		myselfInit(t_data, NULL, t_next);
 	}
 	
-	template<T>
-	LinkListElmt(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next)
+	//init data -- 构造函数
+	//T* t_data , ponit to element data -- 指向元素的数据的一个指针
+	//LinkListElmt* t_prev, point to prev element -- 指向上一个元素
+	//LinkListElmt* t_next, point to next element -- 指向下一个元素
+	template<class T>
+	LinkListElmt::LinkListElmt(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next)
 	{
-			data = t_data;
-			prev = t_prev;
-			prev = t_next;
+		myselfInit(t_data, t_prev, t_next);
 	}
+	/** end constructor*/
 
 } 
 
