@@ -18,7 +18,7 @@ namespace ez_stl
 		LinkListElmt();
 		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev);
 		LinkListElmt(T* t_data, LinkListElmt<T>* t_next);
-		LinkListElmt(t* t_data, linklistelmt<t>* t_prev, linklistelmt<t>* t_next);
+		LinkListElmt(T* t_data, LinkListElmt<T>* t_prev, LinkListElmt<T>* t_next);
 	};
 
 	template <class T>
