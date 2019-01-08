@@ -1,10 +1,5 @@
-Plan to coding a lightweight stl library;
-want update some basic data struct and algorithm;
+#筹划编写一个轻量级stl
+##编写中。。。
 
-the goal is to learn and maintain an open source project;
-
-
-筹划编写一个轻量级stl
-计划包含一些基础数据结构，和常用的多数算法
-
-目的主要为了学习，和维护一个开源项目
+主要目的用于学习，和维护一个开源项目
+并能够靠通俗的注释来帮助他人学习stl
