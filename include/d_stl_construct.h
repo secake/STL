@@ -9,7 +9,10 @@ GI_STL_INTERNAL_CONSTRUCT_H
 
 __STL_BEGIN_NAMESPACE
 
-//这是SGI内部的名称，只会被SGI STL内部调用
+/* 以下的函数名只会被SGI STL调用
+ * 用户级不要调用此API
+ */
+
 
 //对已经由stl_alloc.h中分配好的内存进行初始化工作
 //	_T1*		__p		,要操作的内存指针，已经申请好内存
