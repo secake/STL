@@ -199,11 +199,7 @@ public:
       { _Alloc::deallocate(__p, sizeof (_Tp)); }
 };
 
-// Allocator adaptor to check size arguments for debugging.
-// Reports errors using assert.  Checking can be disabled with
-// NDEBUG, but it's far better to just use the underlying allocator
-// instead when no checking is desired.
-// There is some evidence that this can confuse Purify.
+// 配置器的配接器，每配置一块内存，都会比需求多出8字节来
 template <class _Alloc>
 class debug_alloc {
 
@@ -407,7 +403,8 @@ typedef __default_alloc_template<__NODE_ALLOCATOR_THREADS, 0> alloc;
 //线程不安全
 typedef __default_alloc_template<false, 0> single_client_alloc;
 
-//重载二级配置器的==，!=操作符，用来判断是否都为线程安全或不安全
+//重载二级配置器的==，!=操作符，用来判断两个配置器是否相同，因为参数都传进来了，所以类型肯定相同
+//但这么做的原因是下面还有很多这样的重载
 template <bool __threads, int __inst>
 inline bool operator==(const __default_alloc_template<__threads, __inst>&,
                        const __default_alloc_template<__threads, __inst>&)
@@ -429,7 +426,7 @@ inline bool operator!=(const __default_alloc_template<__threads, __inst>&,
 /*从内存池分配空间到自由链表的函数
  * size_t __size,	即为8,16,24...等等
  * int& __nobjs,	表示分配多少个__size大小的内存，refill()中设置了此值为20。
- *					！注意这里使用的是引用，因为这里可能会修改他的值，并想让调用者知道他的修改
+ *					！注意这里使用的是引用&，因为这里可能会修改他的值，并想让调用者知道他的修改
  *
  * 使用内存池的好处是：
  *	减少内存malloc和free的次数，减少消耗
@@ -474,64 +471,66 @@ __default_alloc_template<__threads, __inst>::_S_chunk_alloc(size_t __size,
         }
 		//置空了内存池之后，进行malloc分配空间到内存池
         _S_start_free = (char*)malloc(__bytes_to_get);
+	//如果malloc失败，则代表已经无法从内存池中取出内存，则去大于__size的自由链表中查找是否有剩余内存
         if (0 == _S_start_free) {
             size_t __i;
             _Obj* __STL_VOLATILE* __my_free_list;
-	    _Obj* __p;
-            // Try to make do with what we have.  That can't
-            // hurt.  We do not try smaller requests, since that tends
-            // to result in disaster on multi-process machines.
+	
+		//去大于__size的自由链表中查找是否有剩余内存
             for (__i = __size;
                  __i <= (size_t) _MAX_BYTES;
                  __i += (size_t) _ALIGN) {
                 __my_free_list = _S_free_list + _S_freelist_index(__i);
                 __p = *__my_free_list;
+		//如果找到了剩余的内存，则将剩余的内存还回给内存池，并且重新调用此方法，满足此次自由链表的填充需求
                 if (0 != __p) {
                     *__my_free_list = __p -> _M_free_list_link;
                     _S_start_free = (char*)__p;
                     _S_end_free = _S_start_free + __i;
                     return(_S_chunk_alloc(__size, __nobjs));
-                    // Any leftover piece will eventually make it to the
-                    // right free list.
                 }
             }
-	    _S_end_free = 0;	// In case of exception.
+		//很明显，连自由链表中都没有够回收内存了，真是所有内存都用尽了呢！这时候只能够求助于一级配置器了，并把内存不足的处理锅留给一级配置器来背,而且如果用户没有设置一级配置器的oom_handler的话，那么一级配置器不出所料的将抛出异常
+	    _S_end_free = 0;
             _S_start_free = (char*)malloc_alloc::allocate(__bytes_to_get);
-            // This should either throw an
-            // exception or remedy the situation.  Thus we assume it
-            // succeeded.
         }
+	//如果一级配置器没有抛出异常，并且配置内存成功了，那可真是个好消息，内存池又可以重新分配了，就继续调用此方法，完成此次自由链表的填充
         _S_heap_size += __bytes_to_get;
         _S_end_free = _S_start_free + __bytes_to_get;
         return(_S_chunk_alloc(__size, __nobjs));
     }
 }
 
-
-/* Returns an object of size __n, and optionally adds to size __n free list.*/
-/* We assume that __n is properly aligned.                                */
-/* We hold the allocation lock.                                         */
+//如果自由链表空了的话，会调用这个函数来从内存池取出内存，并将内存填充给自由链表
 template <bool __threads, int __inst>
 void*
 __default_alloc_template<__threads, __inst>::_S_refill(size_t __n)
 {
+	//当然不能一个一个分配了，那样就完全没有解决内存碎片的问题，二级分配器的好处都没了
+	//refill会向内存池申请20个__n大小的空间，注意！申请到的内存可能小于20个__n大小，但一定会大于1个__n大小，
+	//并且将一个返回给自由链表的调用函数，由自由链表返还给申请者，剩余的19个会直接填充给自由链表，这也是refill命名的原因
     int __nobjs = 20;
+	//向内存池申请内存
     char* __chunk = _S_chunk_alloc(__n, __nobjs);
     _Obj* __STL_VOLATILE* __my_free_list;
     _Obj* __result;
     _Obj* __current_obj;
     _Obj* __next_obj;
     int __i;
-
+	//如果返回的刚刚好只有一个__n大小，则直接返回给自由链表就好了
     if (1 == __nobjs) return(__chunk);
+
+	//定位自由链表
     __my_free_list = _S_free_list + _S_freelist_index(__n);
 
-    /* Build free list in chunk */
+	//修改19个或更少的结点间的逻辑指向关系
       __result = (_Obj*)__chunk;
+	//看这几句感觉其实STL源码的可读性真的挺高的
       *__my_free_list = __next_obj = (_Obj*)(__chunk + __n);
       for (__i = 1; ; __i++) {
         __current_obj = __next_obj;
         __next_obj = (_Obj*)((char*)__next_obj + __n);
+	//如果是最后一个结点，则把指针(next指针)指向0，
         if (__nobjs - 1 == __i) {
             __current_obj -> _M_free_list_link = 0;
             break;
@@ -539,9 +538,11 @@ __default_alloc_template<__threads, __inst>::_S_refill(size_t __n)
             __current_obj -> _M_free_list_link = __next_obj;
         }
       }
+	//注意这里只返回了一个哦
     return(__result);
 }
 
+//reallocate函数，内存不够时从新分配内存吧，例如vector是可变长数组，当元素存储不下时，vector会调用此函数分配内存，vector新分配的内存会是原内存空间的二倍大小
 template <bool threads, int inst>
 void*
 __default_alloc_template<threads, inst>::reallocate(void* __p,
@@ -551,17 +552,27 @@ __default_alloc_template<threads, inst>::reallocate(void* __p,
     void* __result;
     size_t __copy_sz;
 
+	//当新空间和旧空间的大小都超过128字节时，视为大空间，则直接调用系统的realloc()函数
     if (__old_sz > (size_t) _MAX_BYTES && __new_sz > (size_t) _MAX_BYTES) {
         return(realloc(__p, __new_sz));
     }
+	//如果就空间和新空间在扩大到8的倍数之后大小相同，则代表不需要重新分配空间，直接返回
     if (_S_round_up(__old_sz) == _S_round_up(__new_sz)) return(__p);
+	//先调用二级分配器的allocate()函数来分配小空间内存，因为没有必要再写一套自由链表，内存池balabala的逻辑
     __result = allocate(__new_sz);
+	//判断是旧空间大还是新空间大，把要内存拷贝的大小设置为小的那个。
+	//所以当要新申请的空间小于旧的时，则会出现数据丢失，不过没准有人希望这么做呢~
     __copy_sz = __new_sz > __old_sz? __old_sz : __new_sz;
+	//进行内存拷贝，没办法，不可能做到不重新申请空间直接扩充容量的行为，只能申请一块大的空间，并把原空间的数据拷贝过来
     memcpy(__result, __p, __copy_sz);
+	//都拷贝完了，就空间肯定是要析构掉的了，调用的是二级分配的内存回收函数
     deallocate(__p, __old_sz);
     return(__result);
 }
 
+//以下是进行静态变量的初始化工作
+
+//线程加锁初始化balabala等，也不太了解
 #ifdef __STL_THREADS
     template <bool __threads, int __inst>
     _STL_mutex_lock
@@ -569,7 +580,7 @@ __default_alloc_template<threads, inst>::reallocate(void* __p,
         __STL_MUTEX_INITIALIZER;
 #endif
 
-
+//初始化内存池空
 template <bool __threads, int __inst>
 char* __default_alloc_template<__threads, __inst>::_S_start_free = 0;
 
@@ -579,35 +590,32 @@ char* __default_alloc_template<__threads, __inst>::_S_end_free = 0;
 template <bool __threads, int __inst>
 size_t __default_alloc_template<__threads, __inst>::_S_heap_size = 0;
 
+//初始化16个空的自由链表
 template <bool __threads, int __inst>
 typename __default_alloc_template<__threads, __inst>::_Obj* __STL_VOLATILE
 __default_alloc_template<__threads, __inst> ::_S_free_list[
 # if defined(__SUNPRO_CC) || defined(__GNUC__) || defined(__HP_aCC)
+	//全局函数的枚举，代表自由链表个数，即16
     _NFREELISTS
 # else
+	//二级配置器中局部变量的枚举，代表自由链表个数，即16
     __default_alloc_template<__threads, __inst>::_NFREELISTS
 # endif
+	//全部初始化为0
 ] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
-// The 16 zeros are necessary to make version 4.1 of the SunPro
-// compiler happy.  Otherwise it appears to allocate too little
-// space for the array.
+#endif /*这是没有定义user_malloc的情况下的，即使用二级分配器的*/
 
-#endif /* ! __USE_MALLOC */
 
-// This implements allocators as specified in the C++ standard.  
-//
-// Note that standard-conforming allocators use many language features
-// that are not yet widely implemented.  In particular, they rely on
-// member templates, partial specialization, partial ordering of function
-// templates, the typename keyword, and the use of the template keyword
-// to refer to a template member of a dependent type.
-
+//下面这个分配器类实现了C++标准
+//但SGI只是简单实现了，并没有用，SGI使用的是simple_alloc类
+//因为SGI决定把 内存的分配和变量的初始化分开来进行
 #ifdef __STL_USE_STD_ALLOCATORS
 
 template <class _Tp>
 class allocator {
-  typedef alloc _Alloc;          // The underlying allocator.
+  typedef alloc _Alloc;          //基础分配器，在SGI STL里即使二级配置器
 public:
+	//定义了一些别名，并不用特别介绍吧
   typedef size_t     size_type;
   typedef ptrdiff_t  difference_type;
   typedef _Tp*       pointer;
@@ -620,32 +628,35 @@ public:
     typedef allocator<_Tp1> other;
   };
 
+	//构造析构函数，__STL_NOTHROW定义在stl_config.h中，要么为空，要么会抛出throw异常
   allocator() __STL_NOTHROW {}
   allocator(const allocator&) __STL_NOTHROW {}
   template <class _Tp1> allocator(const allocator<_Tp1>&) __STL_NOTHROW {}
   ~allocator() __STL_NOTHROW {}
 
+	//获取地址，返回指针或常量指针
   pointer address(reference __x) const { return &__x; }
   const_pointer address(const_reference __x) const { return &__x; }
 
-  // __n is permitted to be 0.  The C++ standard says nothing about what
-  // the return value is when __n == 0.
+ 	// 分配器接口，直接调用二级配置器的接口，__n 是可以为0的，因为c++标准这么说的
   _Tp* allocate(size_type __n, const void* = 0) {
     return __n != 0 ? static_cast<_Tp*>(_Alloc::allocate(__n * sizeof(_Tp))) 
                     : 0;
   }
 
-  // __p is not permitted to be a null pointer.
+ 	// 分配器内存回收接口，__p 不可以为0
   void deallocate(pointer __p, size_type __n)
     { _Alloc::deallocate(__p, __n * sizeof(_Tp)); }
-
+	//size_t可以保证其大小足以存储内存中所有对象，所以STL中设置可分配的最大空间为size_t字节，即为size_t(-1)/sizeof(_Tp)个_Tp类型变量
   size_type max_size() const __STL_NOTHROW 
     { return size_t(-1) / sizeof(_Tp); }
-
+	//执行简单的consruct和destiry
   void construct(pointer __p, const _Tp& __val) { new(__p) _Tp(__val); }
   void destroy(pointer __p) { __p->~_Tp(); }
 };
 
+
+//并没有传进任何类型的分配器
 template<>
 class allocator<void> {
 public:
@@ -660,29 +671,26 @@ public:
   };
 };
 
-
+//重载==运算符，返回两个配置器相等
 template <class _T1, class _T2>
 inline bool operator==(const allocator<_T1>&, const allocator<_T2>&) 
 {
   return true;
 }
 
+//重载!=运算符，返回两个配置器相等，因为!=返回值为false就代表==
 template <class _T1, class _T2>
 inline bool operator!=(const allocator<_T1>&, const allocator<_T2>&)
 {
   return false;
 }
 
-// Allocator adaptor to turn an SGI-style allocator (e.g. alloc, malloc_alloc)
-// into a standard-conforming allocator.   Note that this adaptor does
-// *not* assume that all objects of the underlying alloc class are
-// identical, nor does it assume that all of the underlying alloc's
-// member functions are static member functions.  Note, also, that 
-// __allocator<_Tp, alloc> is essentially the same thing as allocator<_Tp>.
 
+//对配置器进行适配器，把SGI STL的配置器转换为标准接口
+//其中内容基本已经介绍过，不在介绍
 template <class _Tp, class _Alloc>
 struct __allocator {
-  _Alloc __underlying_alloc;
+  _Alloc __underlying_alloc;	
 
   typedef size_t    size_type;
   typedef ptrdiff_t difference_type;
@@ -707,14 +715,14 @@ struct __allocator {
   pointer address(reference __x) const { return &__x; }
   const_pointer address(const_reference __x) const { return &__x; }
 
-  // __n is permitted to be 0.
+  
   _Tp* allocate(size_type __n, const void* = 0) {
     return __n != 0 
         ? static_cast<_Tp*>(__underlying_alloc.allocate(__n * sizeof(_Tp))) 
         : 0;
   }
 
-  // __p is not permitted to be a null pointer.
+  
   void deallocate(pointer __p, size_type __n)
     { __underlying_alloc.deallocate(__p, __n * sizeof(_Tp)); }
 
@@ -738,6 +746,9 @@ class __allocator<void, _Alloc> {
   };
 };
 
+
+
+//重载==运算符，用于判断两个分配器是否相同
 template <class _Tp, class _Alloc>
 inline bool operator==(const __allocator<_Tp, _Alloc>& __a1,
                        const __allocator<_Tp, _Alloc>& __a2)
@@ -746,18 +757,16 @@ inline bool operator==(const __allocator<_Tp, _Alloc>& __a1,
 }
 
 #ifdef __STL_FUNCTION_TMPL_PARTIAL_ORDER
+//重载!=运算符，用于判断两个分配器是否不同
 template <class _Tp, class _Alloc>
 inline bool operator!=(const __allocator<_Tp, _Alloc>& __a1,
                        const __allocator<_Tp, _Alloc>& __a2)
 {
   return __a1.__underlying_alloc != __a2.__underlying_alloc;
 }
-#endif /* __STL_FUNCTION_TMPL_PARTIAL_ORDER */
+#endif 
 
-// Comparison operators for all of the predifined SGI-style allocators.
-// This ensures that __allocator<malloc_alloc> (for example) will
-// work correctly.
-
+//重载一级配置器的==和!=运算符
 template <int inst>
 inline bool operator==(const __malloc_alloc_template<inst>&,
                        const __malloc_alloc_template<inst>&)
@@ -772,9 +781,9 @@ inline bool operator!=(const __malloc_alloc_template<__inst>&,
 {
   return false;
 }
-#endif /* __STL_FUNCTION_TMPL_PARTIAL_ORDER */
+#endif 
 
-
+//debug_alloc的==和!=运算符的重载
 template <class _Alloc>
 inline bool operator==(const debug_alloc<_Alloc>&,
                        const debug_alloc<_Alloc>&) {
@@ -789,33 +798,11 @@ inline bool operator!=(const debug_alloc<_Alloc>&,
 }
 #endif /* __STL_FUNCTION_TMPL_PARTIAL_ORDER */
 
-// Another allocator adaptor: _Alloc_traits.  This serves two
-// purposes.  First, make it possible to write containers that can use
-// either SGI-style allocators or standard-conforming allocator.
-// Second, provide a mechanism so that containers can query whether or
-// not the allocator has distinct instances.  If not, the container
-// can avoid wasting a word of memory to store an empty object.
 
-// This adaptor uses partial specialization.  The general case of
-// _Alloc_traits<_Tp, _Alloc> assumes that _Alloc is a
-// standard-conforming allocator, possibly with non-equal instances
-// and non-static members.  (It still behaves correctly even if _Alloc
-// has static member and if all instances are equal.  Refinements
-// affect performance, not correctness.)
 
-// There are always two members: allocator_type, which is a standard-
-// conforming allocator type for allocating objects of type _Tp, and
-// _S_instanceless, a static const member of type bool.  If
-// _S_instanceless is true, this means that there is no difference
-// between any two instances of type allocator_type.  Furthermore, if
-// _S_instanceless is true, then _Alloc_traits has one additional
-// member: _Alloc_type.  This type encapsulates allocation and
-// deallocation of objects of type _Tp through a static interface; it
-// has two member functions, whose signatures are
-//    static _Tp* allocate(size_t)
-//    static void deallocate(_Tp*, size_t)
-
-// The fully general version.
+// 配置器的一个配接器，他有两个目的:
+// 1:使得容器既可以使用标准风格也可以使用SGI风格的分配器
+// 2:提供一种查询一个分配器是否有不同实例的机制。如果没有不同实例，容器可以避免浪费内存来存储空对象
 
 template <class _Tp, class _Allocator>
 struct _Alloc_traits
